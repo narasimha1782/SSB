@@ -32,7 +32,6 @@ NUMBERS = {
     '0': '11', '1': '7', '2': '8', '3': '9', '4': '4', '5': '5', '6': '6', 
     '7': '1', '8': '2', '9': '3','.' : '10',
 }
-n1 = 0
 STACK = {}
 LENGTH_STACK_MIN = 460
 LENGTH_STACK_MAX = 1000
@@ -62,7 +61,7 @@ def load_web_driver():
 
 # Function to run websocket_log independently
 def websocket_log(last_update_time):
-    global STACK, CURRENCY,PERIOD, CURRENCY_CHANGE, CURRENCY_CHANGE_DATE, HISTORY_TAKEN, in_deposit, last_processed_time
+    global STACK, CURRENCY,PERIOD, CURRENCY_CHANGE,na, CURRENCY_CHANGE_DATE, HISTORY_TAKEN, in_deposit, last_processed_time
 
     current_time = datetime.now()
     if (current_time - last_update_time).total_seconds() >= 1:  # Process every 1 seconds
@@ -112,7 +111,7 @@ def websocket_log(last_update_time):
 
 # Function to handle trading logic, run independently in a thread
 def trade_process():
-    global STACK, candles, last_processed_time, fast_ema_period, slow_ema_period, last_processed_candle_time, n1
+    global STACK, candles, last_processed_time, fast_ema_period, slow_ema_period, last_processed_candle_time
     global signal_price, tr, PERIOD
     processed_candles_count = 0
     if PERIOD == 5:
@@ -206,25 +205,25 @@ def trade_process():
                                      dummy_work_with_countdown() 
         if len(candles) > 30:
             capture_reversal_points(candles)
-            if n1 == 0:
-                 n1 = n1 + 1
+            
             candles.clear()    
             print(f"candles cleared")
             
         time.sleep(1)  # Wait for a second before checking again
 def do_action(signal):
     global signal_price, CURRENCY, in_deposit, previous_amount, tradeprofit, PERIOD, na, candles, trade_profit, indeposit
-    global signal1, tr
+    global signal1, tr, in_deposit
     tr = PERIOD+3
     print(f"signal : {signal}")
     driver = get_driver_instance()
-      
-    if signal1 != signal_price:
+     
+    if signal1 != signal_price and na > 5:
         print(f"market is trending :and final signal executed: {signal}")
         driver.find_element(by=By.CLASS_NAME, value=f'btn-{signal}').click()
         print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {signal.upper()}, currency: {CURRENCY} signal price: {signal_price}")
         signal1 = signal_price
         dummy_work_with_countdown()
+
         indeposit = in_deposit
         closed_trades = driver.find_elements(by=By.CLASS_NAME, value='deals-list__item')
         if closed_trades:
@@ -236,8 +235,9 @@ def do_action(signal):
                 amount = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '#put-call-buttons-chart-1 > div > div.blocks-wrap > div.block.block--bet-amount > div.block__control.control > div.control__value.value.value--several-items > div > input[type=text]'))
                 )
-
-                dep = in_deposit / 10 
+                deposit = driver.find_element(by=By.CSS_SELECTOR, value='body > div.wrapper > div.wrapper__top > header > div.right-block.js-right-block > div.right-block__item.js-drop-down-modal-open > div > div.balance-info-block__data > div.balance-info-block__balance > span')
+                i_deposit = float(deposit.text.replace(',', ''))
+                dep = i_deposit / 5 
                 if amount_won == '0':
                     if loss == '0':    
                           # If loss, move to the next Martingale value
@@ -252,13 +252,13 @@ def do_action(signal):
                     next_amount = previous_amount
                     tradeprofit += float(amount_won)
                     print(f"trading profit:{tradeprofit}")
-                
+                if tradeprofit >= in_deposit/2 or i_deposit <1:
+                    graceful_exit()
                 if dep < next_amount : 
                     next_amount = dep
                 if next_amount < 1 :
                     next_amount = 1   
-                trade_profit = tradeprofit
-                next_amount = round(next_amount,2)    
+                next_amount = round(next_amount,1)    
                 print(f"Next Trade amount: {next_amount}") 
                 if next_amount != previous_amount:
                     amount.click()
@@ -276,7 +276,12 @@ def do_action(signal):
         pass
                     
     else:
-        print(f"Market is consolidating or reverse")
+        if na <= 5: 
+          na = na +1
+          print(f"Analyzing SNR's and skip trade")  
+        else:
+          print(f"Already signal Executed")
+        tr = 0
         pass
 
 def dummy_work_with_countdown():
@@ -376,11 +381,16 @@ def heiken_ashi_trading_logic(candles, window_size=2):
     return "hold"
 
 def set_platform():
-      global na, in_deposit, previous_amount, next_amount
-      driver = get_driver_instance()
-      if na == 0:
-        next_amount = 1
-        previous_amount = 1
+        global na, in_deposit, previous_amount, next_amount, tr, na
+        na =0
+        tr = 0
+        driver = get_driver_instance()
+        deposit = driver.find_element(by=By.CSS_SELECTOR, value='body > div.wrapper > div.wrapper__top > header > div.right-block.js-right-block > div.right-block__item.js-drop-down-modal-open > div > div.balance-info-block__data > div.balance-info-block__balance > span')
+        in_deposit = float(deposit.text.replace(',', ''))
+        print(f"deposit :{in_deposit}")
+        next_amount = in_deposit /10
+        next_amount = round(next_amount,1)
+        previous_amount = next_amount
         amount_input = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, '#put-call-buttons-chart-1 > div > div.blocks-wrap > div.block.block--bet-amount > div.block__control.control > div.control__value.value.value--several-items > div > input[type=text]'))
         )
@@ -394,9 +404,7 @@ def set_platform():
             hand_delay()
         hand_delay()    
         amount_input.click()
-        deposit = driver.find_element(by=By.CSS_SELECTOR, value='body > div.wrapper > div.wrapper__top > header > div.right-block.js-right-block > div.right-block__item.js-drop-down-modal-open > div > div.balance-info-block__data > div.balance-info-block__balance > span')
-        in_deposit = float(deposit.text.replace(',', ''))
-        print(f"deposit :{in_deposit}")
+      
         try:
             closed_tab = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, '#bar-chart > div > div > div.right-widget-container > div > div.widget-slot__header > div.divider > ul > li:nth-child(2) > a'))
@@ -409,7 +417,7 @@ def set_platform():
                 closed_tab_parent.click()                
         except Exception as e:
             print(f"Error closed value: {e}")
-        na = 1
+
 def signal_handler(signal, frame):
     """
     Handles termination signals (SIGTERM, SIGINT).
@@ -427,7 +435,7 @@ def signal_handler(signal, frame):
 
 def graceful_exit():
     global driver, STACK, candles, significant_reversals, confirmed_reversals, tr, previous_amount, tradeprofit
-    global signal_price, n1, CURRENCY, CURRENCY_CHANGE, HISTORY_TAKEN, in_deposit
+    global signal_price,na, CURRENCY, CURRENCY_CHANGE, HISTORY_TAKEN, in_deposit
 
     print("Exiting gracefully...")
     stop_threads()
@@ -449,7 +457,7 @@ def graceful_exit():
     previous_amount = 0
     tradeprofit = 0
     signal_price = 0
-    n1 = 0
+    na =0
     CURRENCY = None
     CURRENCY_CHANGE = False
     HISTORY_TAKEN = False
@@ -484,9 +492,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            if tradeprofit > 20 and in_deposit < 0:
-                print("Exit conditions met: tradeprofit > 20 and in_deposit < 0.")
-                graceful_exit()
+          
             last_update_time = websocket_log(last_update_time)
         except Exception as e:
             print(f"Error in main: {e}")
